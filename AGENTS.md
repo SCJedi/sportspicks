@@ -30,7 +30,7 @@ Stack: one Cloudflare Worker (`src/worker.js`) plus a D1 (SQLite) database bound
 | `public/setup-guide.html` | Picture-by-picture setup guide served at `/setup-guide.html`. Steps come from `docs/GUIDE-FACTS.md`. |
 | `docs/GUIDE-FACTS.md` | Single source for every user-facing guide: steps, names, links, recovery, troubleshooting, disclaimer. |
 | `test/*.test.js` | `node:test` suites: `scoring`, `pool`, `theme`, `sources`. |
-| `wrangler.toml` | Worker `sportspicks`, `main = "src/worker.js"`, assets from `./public`, D1 binding `DB` (database `sportspicks`), cron `*/10 * * * *`. |
+| `wrangler.toml` | Worker `the-spread-sheet`, `main = "src/worker.js"`, assets from `./public`, D1 binding `DB` (database `the-spread-sheet`), cron `*/10 * * * *`. |
 
 ## Data model
 
@@ -64,6 +64,14 @@ The snapshot is placed in the **same D1 batch** as every write, so it is always 
 
 ## Request flow
 
+**Open weeks and season totals.**
+- The `open_mode` setting is `current`, `next` (the default) or `season`. `openAhead()` in `src/worker.js` applies it after each sync.
+  - `next` opens the following week once every game of the current week has kicked off, and refreshes it every sync.
+  - `season` loads the rest of the regular season and refreshes it daily, because kickoff times move and kickoff is what locks picks.
+- `/api/state` returns `league.open_week`, the earliest week with an open game, and the Picks page opens there.
+- `/api/season?season=YYYY` returns totals only, from `seasonStats()` in `src/scoring.js`: never picks, so nothing hidden before kickoff leaks.
+- Each part of the Season tab can be switched off with `season_tab`, `season_weeks_won`, `season_weekly`, `season_best_worst` and `season_streaks`.
+
 1. `fetch(req, env, ctx)`: paths starting `/api/` go to `api()`; everything else is `env.ASSETS.fetch(req)`. Uncaught errors become a 500 JSON error.
 2. `api()`: `ensureSchema(db)` → `getSettings(db)` → `currentPlayer(req, db)` (reads the `sp_session` cookie, checks `active` and `session_ver`). POSTs must be `application/json` (else 415).
 3. Public routes: `GET /api/state` (calls `syncIfStale`, then returns league settings, `me`, the week list, `weekView` for the requested or current week, and last week's winners), `POST /api/signup` (first player becomes commissioner and a join code is generated; later players need the join code), `POST /api/login`, `POST /api/logout`.
@@ -96,13 +104,15 @@ npm test             # node --test: scoring, pool, theme, sources
 
 `npx wrangler dev --test-scheduled` exposes `/__scheduled` so you can fire the cron locally.
 
+**Fresh test servers (Windows):** `powershell -File scripts/fresh-dev.ps1 -Port 8788` starts a dev server on an empty database and refuses to report READY unless the port held the server it just started and the database has no players (`-Config wrangler.demo.toml -Demo` for the demo, `-Vars "RECOVERY_PIN:4321"` for variables, `-Stop` to free a port). Use it for every end-to-end run. A leftover dev server keeps its port and its data, and later tests then fail in misleading ways ("join code is not right", D1 internal errors, weeks that shouldn't exist). The script's readiness checks use `127.0.0.1`, because wrangler listens on IPv4 only.
+
 **End-to-end API check.** With the dev server running, script the API: signup (first player is commissioner), join code required for the second player, lock rejection after kickoff, hidden picks not in `/api/state` for other players, `calc_preset` round-trip, no money fields in any response, `/admin/picks` override, the five-PIN lockout, and the CSV export. No such script is committed; write one (about 60 lines of `fetch` calls).
 
 **Browser checks** (manual, at 375px and at desktop width, light and dark): nothing scrolls sideways except where intended, the bottom nav appears under 720px, every tap target is at least 44px, inputs don't zoom on iPhone, the theme picker applies every theme, and the footer credit shows.
 
 **Deploy.**
 - One-click: the "Deploy to Cloudflare" button in `README.md` copies the repo to the user's GitHub and provisions the Worker and D1 database.
-- CLI: `npx wrangler login`, `npx wrangler d1 create sportspicks`, paste the printed `database_id` into `wrangler.toml` (the committed value is a zero placeholder), then `npx wrangler deploy`.
+- CLI: `npx wrangler login`, `npx wrangler d1 create the-spread-sheet`, paste the printed `database_id` into `wrangler.toml` (the committed value is a zero placeholder), then `npx wrangler deploy`.
 
 ## Extending
 
